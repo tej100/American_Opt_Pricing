@@ -1,0 +1,13 @@
+---
+title: "FE 620 Final Project"
+subtitle: "I pledge my honor that I have abided by the Stevens Honor System"
+author: "Author: "
+date: "Last compiled on `r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+runtime: shiny
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
