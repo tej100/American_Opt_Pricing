@@ -10,4 +10,10 @@ urlcolor: blue
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+```
+
+```{r}
+df = read.csv("yahoo_options.csv")
+df = df %>% filter(tic == "SPY") %>% filter(lastTradeDate == "2023-03-22") %>% filter(tau <= 1)
 ```
