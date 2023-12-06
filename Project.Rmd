@@ -10,125 +10,91 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-am_price_tree <- function(S,U,D,p,r,N,cp,K) {
-  
-  tree <<- matrix(0, nrow=N+1, ncol=N+1)
-  for (i in 1:(N+1)) {
-    for (j in 1:i) {
-      tree[j, i] <<- S * (1+U)^(i-j) * (1+D)^(j-1)
-    }  
-  }
-  
-  opt_tree <<- matrix(0, nrow=N+1, ncol=N+1)
-  
-  if(cp=="c"){
-    
-    for(x in c(0:N+1)){
-      opt_tree[x, N+1] <<- max(tree[x, N+1]-K,0)
-    }
-    
-    for (i in seq(N,1,-1)) {
-      for (j in c(0:i)) {
-        
-        ex_now<-max(tree[j,i]-K,0)
-
-        opt_tree[j, i] <<- max(ex_now,(p*(opt_tree[j, i+1]) + (1-p) * (opt_tree[j+1, i+1]))/(1+r))
-        
-        }  
-      }
-    }
-    
-  else{
-    for(x in c(0:N+1)){
-      opt_tree[x, N+1] <<- max(K-tree[x, N+1],0)
-    }
-    
-    for (i in seq(N,1,-1)) {
-      for (j in c(0:i)) {
-        
-        ex_now<-max(K-tree[j,i],0)
-        
-        opt_tree[j, i] <<- max(ex_now,(p*(opt_tree[j, i+1]) + (1-p) * (opt_tree[j+1, i+1]))/(1+r))
-        
-      }  
-    }
-  }
-    
-  return(opt_tree[1,1])
-}
-
-print("AM Call Price:")
-am_price_tree(418,u,d,rn_p,rf,3,"c",415)
-
-print("AM Put Price:")
-am_price_tree(418,u,d,rn_p,rf,3,"p",415)
-
-
-```
-
-
-```{r}
-#CRR Model
+#S - Price of Stock at t=0
+#sig - Volatility of Stock
+#r - Risk-free Rate
+#N - Number of steps in total
+#t - Time to Expiry
+#cp - Call or put
+#K - Strike
 am_price_tree <- function(S,sig,r,N,t,cp,K) {
   
-  #Calculate U, D and P-Star According to CRR
+  #Calculate U, D and P-Star
   U<-exp(sig*sqrt(t/N))
   D<-exp(-sig*sqrt(t/N))
   p<-(exp(r*(t/N))-D)/(U-D)
   
-  #Create price tree
-  tree <<- matrix(0, nrow=N+1, ncol=N+1)
-  for (i in 1:((N*t)+1)) {
+  #Create stock price tree
+  tree <- matrix(0, nrow=N+1, ncol=N+1)
+  for (i in 1:((N)+1)) {
     for (j in 1:i) {
-      tree[j, i] <<- S * (U)^(i-j) * (D)^(j-1)
+      tree[j, i] <- S * (U)^(i-j) * (D)^(j-1)
     }  
   }
   
   
-  opt_tree <<- matrix(0, nrow=N+1, ncol=N+1)
+  opt_tree <- matrix(0, nrow=N+1, ncol=N+1)
   #if call do
   if(cp=="c"){
     #Calculate value at last day
-    for(x in c(0:(N*t)+1)){
-      opt_tree[x, (N*t)+1] <<- max(tree[x, N+1]-K,0)
+    for(x in c(0:(N)+1)){
+      opt_tree[x, (N)+1] <- max(tree[x, N+1]-K,0)
     }
     
     #Go back each step while comparing continuation value vs exercise value
-    for (i in seq((N*t),1,-1)) {
+    for (i in seq((N),1,-1)) {
       for (j in c(0:i)) {
         
         ex_now<-max(tree[j,i]-K,0)
 
-        opt_tree[j, i] <<- max(ex_now,(p*(opt_tree[j, i+1]) + (1-p) * (opt_tree[j+1, i+1]))/(1+r))
+        opt_tree[j, i] <- max(ex_now,(p*(opt_tree[j, i+1]) + (1-p) * (opt_tree[j+1, i+1]))/(1+r))
         
         }  
-      }
+    }
+    #Print Call Price
+    print("American Call Price: ")
+    print(opt_tree[1,1])
     }
   
   #if put do(same as call pretty much)
   else{
-    for(x in c(0:(N*t)+1)){
-      opt_tree[x, (N*t)+1] <<- max(K-tree[x, (N*t)+1],0)
+    for(x in c(0:(N)+1)){
+      opt_tree[x, (N)+1] <- max(K-tree[x, (N*t)+1],0)
     }
     
-    for (i in seq((N*t),1,-1)) {
+    for (i in seq((N),1,-1)) {
       for (j in c(0:i)) {
         
         ex_now<-max(K-tree[j,i],0)
         
-        opt_tree[j, i] <<- max(ex_now,(p*(opt_tree[j, i+1]) + (1-p) * (opt_tree[j+1, i+1]))/(1+r))
+        opt_tree[j, i] <- max(ex_now,(p*(opt_tree[j, i+1]) + (1-p) * (opt_tree[j+1, i+1]))/(1+r))
         
       }  
     }
+    print("American Put Price: ")
+    print(opt_tree[1,1])
   }
+  
+  #Create Delta Tree and Calculate Delta
+  delta_tree <- matrix(0, nrow=N, ncol=N)
+  for (i in seq(1,N,1)) {
+      for (j in c(1:i)) {
+        delta_tree[j, i] <- (opt_tree[j,i+1]-opt_tree[j+1,i+1])/(tree[j,i+1]-tree[j+1,i+1])
+      }  
+    }
+  
+  
+  #Output option price tree and delta tree
+  print("Option Price Tree: ")
+  print(opt_tree)
+  
+  print("Delta Tree: ")
+  print(delta_tree)
+  
+  
     
-  return(opt_tree[1,1])
 }
 
-print("AM Call Price:")
 am_price_tree(418,.25,.05,6,1,"c",415)
-
-print("AM Put Price:")
-am_price_tree(418,.25,.05,6,1,"p",415)
 
 ```
