@@ -13,7 +13,162 @@ knitr::opts_chunk$set(echo = TRUE)
 library(dplyr)
 ```
 
-```{r}
-df = read.csv("yahoo_options.csv")
-df = df %>% filter(tic == "SPY") %>% filter(lastTradeDate == "2023-03-22") %>% filter(tau <= 1)
+```{r import_data}
+df = readxl::read_xlsx("grid1_lmr4qsjv.xlsx", skip = 1, col_names = T)
 ```
+
+```{r}
+head(df)
+```
+## Data Cleaning
+
+```{r parse}
+# Parse column names
+colnames(df) = sapply(strsplit(colnames(df), "\\.{3}"), function(x) x[1])
+# Remove null rows
+df = df %>% subset(Strike != "ERROR(6)")
+```
+
+```{r split}
+# Split dataset into calls and puts
+calls = df %>%
+  select(1:(ncol(df) %/% 2))
+
+puts = df %>%
+  select((1 + ncol(df) %/% 2):ncol(df))
+```
+
+```{r mid_price}
+# Option price as mid price
+calls = calls %>%
+  mutate(Price = (calls$Bid + calls$Ask) / 2, IVM = IVM / 100) %>%
+  select(-Bid, -Ask, -Last, -Volm)
+puts = puts %>%
+  mutate(Price = (puts$Bid + puts$Ask) / 2, IVM = IVM / 100) %>%
+  select(-Bid, -Ask, -Last, -Volm)
+```
+
+```{r calc_tau}
+# Tau in annual units from contract expiration
+data_date = as.Date("12/01/23", "%m/%d/%y")
+calls = calls %>%
+  mutate(tau = as.numeric(as.Date(sub(".*?(\\d{1,2}/\\d{1,2}/\\d{2,4}).*", "\\1", Ticker), "%m/%d/%y") - data_date) / 252) %>% select(-Ticker) %>% mutate_all(as.numeric)
+puts = puts %>%
+  mutate(tau = as.numeric(as.Date(sub(".*?(\\d{1,2}/\\d{1,2}/\\d{2,4}).*", "\\1", Ticker), "%m/%d/%y") - data_date) / 252) %>% select(-Ticker) %>% mutate_all(as.numeric)
+```
+
+```{r}
+max(calls$tau) * 12
+```
+
+Since the data we're working with does not have options of a time-to-maturity greater than 3 months, and all our data is from the option chain of one day, we can use a constant risk-free rate rather than a stochastic rate. As of December 01, 2023 (the day the data was pulled), the 1-month, 2-month, 3-month and 4-month treasury yields are $\sim 5.4%$, which is what we will use as our proxy for the risk-free rate in our models. The spot price was also \$458.65 at the time the data was pulled.
+
+```{r init_params}
+rf = 0.054
+S0 = 458.65
+div_freq = 0.25
+div_amt = 1.56
+# calls = calls %>% mutate(rf = rf, S0 = S0) %>% select(-Ticker) %>% mutate_all(as.numeric)
+# puts = puts %>% mutate(rf = rf, S0 = S0) %>% select(-Ticker) %>% mutate_all(as.numeric)
+N = 252
+```
+
+```{r}
+head(calls)
+```
+
+```{r option_pricing}
+american_option_price = function(S0, r, sigma, tau, K, steps, opt_type, div_sched = NULL) {
+  
+  # Validating the input parameters
+  if (S0 <= 0 || r <= 0 || sigma <= 0 || tau <= 0 || K <= 0 || steps <= 0) {
+    stop("Input parameters should be positive and non-zero.")
+  }
+  
+  # Calculating the necessary variables
+  dt = tau / steps  # Time step size
+  u = exp(sigma * sqrt(dt))  # Up factor
+  d = 1 / u  # Down factor
+  p = (exp(r * dt) - d) / (u - d)  # Probability of up movement
+  
+  # Adjust stock prices for dividends
+  if (!is.null(div_sched)) {
+    for (i in seq_along(div_sched$time)) {
+      time = div_sched$time[i]
+      amount = div_sched$amount[i]
+      discount_factor = exp(-r * time)
+      S0 = S0 - amount * discount_factor
+    }
+  }
+  
+  # Creating a 2D array to store the stock prices at each node of the tree
+  stock_prices = matrix(0, nrow = steps + 1, ncol = steps + 1)
+  
+  # Calculating the stock prices at each node of the tree
+  for (i in seq(1, steps + 1)) {
+    for (j in seq(1, i)) {
+      stock_prices[i, j] = S0 * (u ^ (i - j)) * (d ^ (j - 1))
+    }
+  }
+  
+  # Creating a 2D array to store the option values at each node of the tree
+  option_values = matrix(0, nrow = steps + 1, ncol = steps + 1)
+  
+  # Calculating the option values at each node of the tree
+  for (i in seq(steps, 0, -1)) {
+    for (j in seq(1, i + 1)) {
+      intr_val = ifelse(opt_type == "put", K - stock_prices[i, j], stock_prices[i, j] - K)
+      if (i == steps) {
+        # At the last step, the option value is the maximum of 0 and the intrinsic value
+        option_values[i, j] = max(0, intr_val)
+      } else {
+        # For other steps, the option value is the maximum of the intrinsic value and the discounted expected value
+        option_values[i, j] = max(intr_val,
+                                   (p * option_values[i + 1, j] + (1 - p) * option_values[i + 1, j + 1]) * exp(-r * dt)
+        )
+      }
+    }
+  }
+  
+  # Returning the option value at the root node of the tree
+  return(option_values[1, 1])
+}
+```
+
+```{r}
+AmericanCallOpt::am_call_bin(100, 95, 0.05, 0.2, 1, 1000)
+```
+
+```{r}
+div_sched_calc = function(tau, freq, amt, time_till_next_exdiv=freq) {
+  if (tau < freq) return(NULL)
+  time = seq(time_till_next_exdiv, tau, freq)
+  amount = rep(amt, length(time))
+  return(list(time = time, amount = amount))
+}
+```
+
+```{r}
+american_option_price(S0 = 100, r = 0.05, sigma = 0.2, tau = 1, K = 95, steps = 1000, opt_type = "call", div_sched = div_sched_calc(0.5, 0.25, 1.56, 15/365.25))
+```
+
+```{r}
+calls$est = apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0,
+    r = rf,
+    sigma = row["IVM"],
+    tau = row["tau"],
+    K = row["Strike"],
+    steps = N,
+    opt_type = "call",
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 15)
+  )
+)
+```
+
+
+```{r}
+calls
+```
+
