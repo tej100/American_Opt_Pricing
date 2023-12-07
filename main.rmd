@@ -61,15 +61,13 @@ puts = puts %>%
 max(calls$tau) * 12
 ```
 
-Since the data we're working with does not have options of a time-to-maturity greater than 3 months, and all our data is from the option chain of one day, we can use a constant risk-free rate rather than a stochastic rate. As of December 01, 2023 (the day the data was pulled), the 1-month, 2-month, 3-month and 4-month treasury yields are $\sim 5.4%$, which is what we will use as our proxy for the risk-free rate in our models. The spot price was also \$458.65 at the time the data was pulled.
+Since the data we're working with does not have options of a time-to-maturity greater than 3 months, and all our data is from the option chain of one day, we can use a constant risk-free rate rather than a stochastic rate. As of December 01, 2023 (the day the data was pulled), the 1-month, 2-month, 3-month and 4-month treasury yields are $\sim 5.4%$, which is what we will use as our proxy for the risk-free rate in our models. The spot price was also \$458.65 at the time the data was pulled. Additionally, SPY pays dividends quarterly and proportional to the dividends paid by the companies in the index. For simplicity, I've set the dividend amount to the average historical amount over the past 4 quarters.
 
 ```{r init_params}
 rf = 0.054
 S0 = 458.65
 div_freq = 0.25
 div_amt = 1.56
-# calls = calls %>% mutate(rf = rf, S0 = S0) %>% select(-Ticker) %>% mutate_all(as.numeric)
-# puts = puts %>% mutate(rf = rf, S0 = S0) %>% select(-Ticker) %>% mutate_all(as.numeric)
 N = 252
 ```
 
@@ -136,8 +134,18 @@ american_option_price = function(S0, r, sigma, tau, K, steps, opt_type, div_sche
 ```
 
 ```{r}
+american_option_price(100, 0.05, 0.2, 1, 95, 1000, "call")
+```
+
+```{r}
 AmericanCallOpt::am_call_bin(100, 95, 0.05, 0.2, 1, 1000)
 ```
+
+```{r}
+library(derivmkts)
+binomopt(100, 95, 0.2, 0.05, 1, 0, 1000, american=TRUE)
+```
+
 
 ```{r}
 div_sched_calc = function(tau, freq, amt, time_till_next_exdiv=freq) {
@@ -162,6 +170,7 @@ calls$est = apply(calls, 1, function(row)
     K = row["Strike"],
     steps = N,
     opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
     div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 15)
   )
 )
