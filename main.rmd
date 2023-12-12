@@ -11,10 +11,11 @@ urlcolor: blue
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(dplyr)
+library(moments)
 ```
 
 ```{r import_data}
-df = readxl::read_xlsx("grid1_lmr4qsjv.xlsx", skip = 1, col_names = T)
+df = readxl::read_xlsx("/Users/andrew/Documents/SCHOOL/2023/Fall 2023/FE620/Final Project/grid1_lmr4qsjv.xlsx", skip = 1, col_names = T)
 ```
 
 ```{r}
@@ -61,6 +62,8 @@ puts = puts %>%
 max(calls$tau) * 12
 ```
 
+## Pricing Model
+
 Since the data we're working with does not have options of a time-to-maturity greater than 3 months, and all our data is from the option chain of one day, we can use a constant risk-free rate rather than a stochastic rate. As of December 01, 2023 (the day the data was pulled), the 1-month, 2-month, 3-month and 4-month treasury yields are $\sim 5.4%$, which is what we will use as our proxy for the risk-free rate in our models. The spot price was also \$458.65 at the time the data was pulled. Additionally, SPY pays dividends quarterly and proportional to the dividends paid by the companies in the index. For simplicity, I've set the dividend amount to the average historical amount over the past 4 quarters, multiplied in with the growth factor.
 
 ```{r init_params}
@@ -100,17 +103,17 @@ american_option_price = function(S0, r, sigma, tau, K, steps, opt_type, div_sche
   }
   
   # Creating a 2D array to store the stock prices at each node of the tree
-  stock_prices = matrix(0, nrow = steps + 1, ncol = steps + 1)
+  stock_prices <<- matrix(0, nrow = steps + 1, ncol = steps + 1)
   
   # Calculating the stock prices at each node of the tree
   for (i in seq(1, steps + 1)) {
     for (j in seq(1, i)) {
-      stock_prices[i, j] = S0 * (u ^ (i - j)) * (d ^ (j - 1))
+      stock_prices[i, j] <<- S0 * (u ^ (i - j)) * (d ^ (j - 1))
     }
   }
   
   # Creating a 2D array to store the option values at each node of the tree
-  option_values = matrix(0, nrow = steps + 1, ncol = steps + 1)
+  option_values <- matrix(0, nrow = steps + 1, ncol = steps + 1)
   
   # Calculating the option values at each node of the tree
   for (i in seq(steps, 0, -1)) {
@@ -118,10 +121,10 @@ american_option_price = function(S0, r, sigma, tau, K, steps, opt_type, div_sche
       intr_val = ifelse(opt_type == "put", K - stock_prices[i, j], stock_prices[i, j] - K)
       if (i == steps) {
         # At the last step, the option value is the maximum of 0 and the intrinsic value
-        option_values[i, j] = max(0, intr_val)
+        option_values[i, j] <- max(0, intr_val)
       } else {
         # For other steps, the option value is the maximum of the intrinsic value and the discounted expected value
-        option_values[i, j] = max(intr_val,
+        option_values[i, j] <- max(intr_val,
                                    (p * option_values[i + 1, j] + (1 - p) * option_values[i + 1, j + 1]) * exp(-r * dt)
         )
       }
@@ -129,9 +132,11 @@ american_option_price = function(S0, r, sigma, tau, K, steps, opt_type, div_sche
   }
   
   # Returning the option value at the root node of the tree
-  return(option_values[1, 1])
+  return(option_values[1,1])
+
 }
 ```
+
 
 ```{r create_div_schedule}
 div_sched_calc = function(tau, freq, amt, time_till_next_exdiv=freq) {
@@ -143,7 +148,106 @@ div_sched_calc = function(tau, freq, amt, time_till_next_exdiv=freq) {
 ```
 
 ```{r apply_call_pricing}
-calls$est = apply(calls, 1, function(row)
+calls$est<-apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0,
+    r = rf,
+    sigma = row["IVM"],
+    tau = row["tau"],
+    K = row["Strike"],
+    steps = 252*row["tau"],
+    opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+)
+```
+
+```{r theta, eval=FALSE}
+theta<-(apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0,
+    r = rf,
+    sigma = row["IVM"],
+    tau = row["tau"]+(row["tau"]*row["h"]),
+    K = row["Strike"],
+    steps = N,
+    opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+)-apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0,
+    r = rf,
+    sigma = row["IVM"],
+    tau = row["tau"]-(row["tau"]*row["h"]),
+    K = row["Strike"],
+    steps = N,
+    opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+))/(2*calls$tau*calls$h)
+
+```
+
+## Calculating the Greeks
+
+We calculated delta, gamma, vega, and rho using finite difference methods. The formula for these are as follows...
+
+$$\Delta = \frac{A(s+\delta s)-A(s - \delta s)}{2 \cdot \delta s}$$
+
+$$\Gamma = \frac{A(s+\delta s)-2A(s)+A(s - \delta s)}{\delta s^2}$$
+
+$$\Upsilon = \frac{A(s,\sigma +\delta \sigma)-A(s, \sigma - \delta \sigma)}{2 \cdot \delta \sigma}$$
+
+$$\rho = \frac{A(s,r +\delta r)-A(s, r - \delta r)}{2 \cdot \delta r}$$
+
+In order to avoid numerical difficulties, we had to adjust $dt$ from $dt = \tau/200$ to $dt = 1/252$(i.e. $steps = \tau \cdot 252$). This is important when calculating gamma, as the nature of the second derivative lead the results to become imprecise with small numbers. This change in step size led to similar results when computing the actual prices of the call and put options. While this method is somewhat computationally intensive, it provides good estimates for all of the Greeks expect for Gamma, which can be better approximated using other methods. 
+```{r greeks, echo=FALSE}
+#Calculate Delta
+h<-1/252
+delta<-(apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0+(S0*h),
+    r = rf,
+    sigma = row["IVM"],
+    tau = row["tau"],
+    K = row["Strike"],
+    steps = N,
+    opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+)-apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0-(S0*h),
+    r = rf,
+    sigma = row["IVM"],
+    tau = row["tau"],
+    K = row["Strike"],
+    steps = N,
+    opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+))/(2*S0*h)
+
+#Calculate Gamma
+gamma<-(apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0+(S0*h),
+    r = rf,
+    sigma = row["IVM"],
+    tau = row["tau"],
+    K = row["Strike"],
+    steps = N,
+    opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+)-(2*apply(calls, 1, function(row)
   american_option_price(
     S0 = S0,
     r = rf,
@@ -155,14 +259,84 @@ calls$est = apply(calls, 1, function(row)
     # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
     div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
   )
-)
+))+apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0-(S0*h),
+    r = rf,
+    sigma = row["IVM"],
+    tau = row["tau"],
+    K = row["Strike"],
+    steps = N,
+    opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+))/((S0*h)^2)
+
+#Calculate Vega
+vega<-(apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0,
+    r = rf,
+    sigma = row["IVM"]+(row["IVM"]*h),
+    tau = row["tau"],
+    K = row["Strike"],
+    steps = N,
+    opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+)-apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0,
+    r = rf,
+    sigma = row["IVM"]-(row["IVM"]*h),
+    tau = row["tau"],
+    K = row["Strike"],
+    steps = N,
+    opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+))/(2*calls$IVM*h)
+
+#Calculate Rho
+rho<-(apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0,
+    r = rf+(rf*h),
+    sigma = row["IVM"],
+    tau = row["tau"],
+    K = row["Strike"],
+    steps = N,
+    opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+)-apply(calls, 1, function(row)
+  american_option_price(
+    S0 = S0,
+    r = rf-(rf*h),
+    sigma = row["IVM"],
+    tau = row["tau"],
+    K = row["Strike"],
+    steps = N,
+    opt_type = "call",
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+))/(2*rf*h)
+
+gamma<-round(gamma,7)
+calls<-cbind(calls,delta,gamma,vega,rho)
 ```
 
 ```{r}
 head(calls)
 ```
+
 ```{r apply_put_pricing}
-puts$est = apply(puts, 1, function(row)
+puts$est <- apply(puts, 1, function(row)
   american_option_price(
     S0 = S0,
     r = rf,
@@ -175,10 +349,48 @@ puts$est = apply(puts, 1, function(row)
     div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
   )
 )
+
+```
+
+## Evaluating Model Output
+
+Looking at the below plot of our model prices vs observed market prices, we see that out model provides a good estimation, but this estimation begins to vary as tau increases. 
+
+```{r}
+plot(calls$Price, col="blue",ylim = c(0,20),main = "Market vs Estimation(Calls)")
+points(calls$est, col="red")
+legend(0, 20, legend=c("Market Price", "Estimation"),  
+       fill = c("blue","red") 
+)
 ```
 
 ```{r}
-plot(calls$Price, col="blue")
-points(calls$est, col="red")
+plot(puts$Price, col="blue",ylim = c(0,20),main = "Market vs Estimation(Puts)")
+points(puts$est, col="red")
+legend(0, 20, legend=c("Market Price", "Estimation"),  
+       fill = c("blue","red") 
+)
 ```
+
+To better identify and quantify this variation, we can plot the MSE of each estimation, which are separated by tau(time to expiry).
+
+```{r}
+diff_squared<-(calls$Price-calls$est)^2
+MSE<-c(sum(diff_squared[1:20])/20,sum(diff_squared[21:40])/20,sum(diff_squared[41:60])/20,sum(diff_squared[61:80])/20)
+tau<-unique(calls$tau)
+
+plot(tau,MSE, main = "MSE vs Tau(Calls)")
+```
+
+Here we can see that our model prices the option with only a two week expiration(the smallest $\tau$) the best, with an average difference of only a couple cents. As tau increases, we can see our model become less and less precise, pricing the longest-dated option dollars away from the true market value.
+
+```{r}
+diff_squared2<-(puts$Price-puts$est)^2
+MSE2<-c(sum(diff_squared2[1:20])/20,sum(diff_squared2[21:40])/20,sum(diff_squared2[41:60])/20,sum(diff_squared2[61:80])/20)
+tau2<-unique(puts$tau)
+
+plot(tau2,MSE2, main = "MSE vs Tau(Puts)")
+```
+
+The same trend can be seen when pricing puts, though to less of a degree as tau increases.
 
