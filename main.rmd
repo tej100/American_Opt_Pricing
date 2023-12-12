@@ -182,35 +182,6 @@ output<-bind_rows(apply(calls, 1, function(row)
 calls<-cbind(calls,output)
 ```
 
-```{r theta, eval=FALSE}
-theta<-(apply(calls, 1, function(row)
-  american_option_price(
-    S0 = S0,
-    r = rf,
-    sigma = row["IVM"],
-    tau = row["tau"]+(row["tau"]*row["h"]),
-    K = row["Strike"],
-    steps = N,
-    opt_type = "call",
-    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
-    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
-  )
-)-apply(calls, 1, function(row)
-  american_option_price(
-    S0 = S0,
-    r = rf,
-    sigma = row["IVM"],
-    tau = row["tau"]-(row["tau"]*row["h"]),
-    K = row["Strike"],
-    steps = N,
-    opt_type = "call",
-    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
-    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
-  )
-))/(2*calls$tau*calls$h)
-
-```
-
 ## Calculating the Greeks
 
 We calculated delta, gamma, and theta using analytical approximations which can be seen below. This was chosen in order to save on computation time, as to numerically compute each greek takes roughly double the time of computing the price of the option itself, and these formulas give good approximations.
