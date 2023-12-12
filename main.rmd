@@ -194,7 +194,7 @@ $$\Theta = \frac{f_{ud}-f}{2 \cdot \frac{\tau}{n}}$$
 
  We calculated vega and rho using finite difference methods. The formula for these are as follows...
 
-$$\upsilon = \frac{A(s,\sigma +\delta \sigma)-A(s, \sigma - \delta \sigma)}{2 \cdot \delta \sigma}$$
+$$\upsilon = \frac{A(s,\sigma +\Delta \sigma)-A(s, \sigma - \Delta \sigma)}{2 \cdot \Delta \sigma}$$
 
 $$\rho = \frac{A(s,r +\delta r)-A(s, r - \delta r)}{2 \cdot \delta r}$$
 
@@ -323,7 +323,7 @@ tau2<-unique(puts$tau)
 plot(tau2,MSE2, main = "MSE vs Tau(Puts)")
 ```
 
-The same trend can be seen when pricing puts, though to less of a degree as tau increases. This increase in error can likely be attributed to our use of constant interest rates and volatility, which are exacerbated when there is more time for the model to account for. 
+The same trend can be seen when pricing puts, though to less of a degree as tau increases. This increase in error can likely be attributed to our use of constant interest rates and volatility, which are exacerbated when there is more time for the model to account for. It's also important to note that for both call and put options, we consistently overprice and never under price. This could be attributed toward high volatility or rates the day we took data, with one or both expected to tame in the near future, but this deserves further investigation.
 
 ## Evaluating the Greeks
 
