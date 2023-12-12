@@ -75,11 +75,13 @@ N = 200
 ```
 
 ```{r}
+h<-calls$tau/N
+calls<-cbind(calls,h)
 head(calls)
 ```
 
 ```{r option_pricing}
-american_option_price = function(S0, r, sigma, tau, K, steps, opt_type, div_sched = NULL) {
+american_option_price = function(S0, r, sigma, tau, K, steps, opt_type, greeks = TRUE,div_sched = NULL) {
   
   # Validating the input parameters
   if (S0 <= 0 || r <= 0 || sigma <= 0 || tau <= 0 || K <= 0 || steps <= 0) {
@@ -113,7 +115,7 @@ american_option_price = function(S0, r, sigma, tau, K, steps, opt_type, div_sche
   }
   
   # Creating a 2D array to store the option values at each node of the tree
-  option_values <- matrix(0, nrow = steps + 1, ncol = steps + 1)
+  option_values <<- matrix(0, nrow = steps + 1, ncol = steps + 1)
   
   # Calculating the option values at each node of the tree
   for (i in seq(steps, 0, -1)) {
@@ -121,19 +123,33 @@ american_option_price = function(S0, r, sigma, tau, K, steps, opt_type, div_sche
       intr_val = ifelse(opt_type == "put", K - stock_prices[i, j], stock_prices[i, j] - K)
       if (i == steps) {
         # At the last step, the option value is the maximum of 0 and the intrinsic value
-        option_values[i, j] <- max(0, intr_val)
+        option_values[i, j] <<- max(0, intr_val)
       } else {
         # For other steps, the option value is the maximum of the intrinsic value and the discounted expected value
-        option_values[i, j] <- max(intr_val,
+        option_values[i, j] <<- max(intr_val,
                                    (p * option_values[i + 1, j] + (1 - p) * option_values[i + 1, j + 1]) * exp(-r * dt)
         )
       }
     }
   }
-  
-  # Returning the option value at the root node of the tree
-  return(option_values[1,1])
-
+  if(greeks == TRUE){
+    # Returning the option value at the root node of the tree
+    fuu<-option_values[3,1]
+    fud<-option_values[3,2]
+    fdd<-option_values[3,3]
+    Suu<-stock_prices[3,1]
+    Sud<-stock_prices[3,2]
+    Sdd<-stock_prices[3,3]
+    
+    t1<-(fuu-fud)/(Suu-Sud)
+    t2<-(fud-fdd)/(Sud-Sdd)
+    t3<-(Suu-Sdd)/2
+    
+    return(data.frame(est = option_values[1,1], Delta =(option_values[2,1]-option_values[2,2])/(stock_prices[2,1]-stock_prices[2,2]) , Gamma = (t1-t2)/t3, Theta = (fud-option_values[1,1])/(2*dt)))
+  }
+  else{
+    return(option_values[1,1])
+  }
 }
 ```
 
@@ -148,19 +164,22 @@ div_sched_calc = function(tau, freq, amt, time_till_next_exdiv=freq) {
 ```
 
 ```{r apply_call_pricing}
-calls$est<-apply(calls, 1, function(row)
+output<-bind_rows(apply(calls, 1, function(row)
   american_option_price(
     S0 = S0,
     r = rf,
     sigma = row["IVM"],
     tau = row["tau"],
     K = row["Strike"],
-    steps = 252*row["tau"],
+    steps = N,
     opt_type = "call",
+    greeks = TRUE,
     # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
     div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
   )
-)
+))
+
+calls<-cbind(calls,output)
 ```
 
 ```{r theta, eval=FALSE}
@@ -194,95 +213,33 @@ theta<-(apply(calls, 1, function(row)
 
 ## Calculating the Greeks
 
-We calculated delta, gamma, vega, and rho using finite difference methods. The formula for these are as follows...
+We calculated delta, gamma, and theta using analytical approximations which can be seen below. This was chosen in order to save on computation time, as to numerically compute each greek takes roughly double the time of computing the price of the option itself, and these formulas give good approximations.
 
-$$\Delta = \frac{A(s+\delta s)-A(s - \delta s)}{2 \cdot \delta s}$$
+$$\Delta = \frac{f_u - f_d}{S_u - S_d}$$
 
-$$\Gamma = \frac{A(s+\delta s)-2A(s)+A(s - \delta s)}{\delta s^2}$$
+$$\Gamma = \frac{\frac{f_{uu}-f_{ud}}{S_{uu}-S_{ud}}-\frac{f_{ud}-f_{dd}}{S_{ud}-S_{dd}}}{\frac{S_{uu}-S_{dd}}{2}}$$
 
-$$\Upsilon = \frac{A(s,\sigma +\delta \sigma)-A(s, \sigma - \delta \sigma)}{2 \cdot \delta \sigma}$$
+$$\Theta = \frac{f_{ud}-f}{2 \cdot \frac{\tau}{n}}$$
+
+ We calculated vega and rho using finite difference methods. The formula for these are as follows...
+
+$$\upsilon = \frac{A(s,\sigma +\delta \sigma)-A(s, \sigma - \delta \sigma)}{2 \cdot \delta \sigma}$$
 
 $$\rho = \frac{A(s,r +\delta r)-A(s, r - \delta r)}{2 \cdot \delta r}$$
 
-In order to avoid numerical difficulties, we had to adjust $dt$ from $dt = \tau/200$ to $dt = 1/252$(i.e. $steps = \tau \cdot 252$). This is important when calculating gamma, as the nature of the second derivative lead the results to become imprecise with small numbers. This change in step size led to similar results when computing the actual prices of the call and put options. While this method is somewhat computationally intensive, it provides good estimates for all of the Greeks expect for Gamma, which can be better approximated using other methods. 
 ```{r greeks, echo=FALSE}
-#Calculate Delta
-h<-1/252
-delta<-(apply(calls, 1, function(row)
-  american_option_price(
-    S0 = S0+(S0*h),
-    r = rf,
-    sigma = row["IVM"],
-    tau = row["tau"],
-    K = row["Strike"],
-    steps = N,
-    opt_type = "call",
-    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
-    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
-  )
-)-apply(calls, 1, function(row)
-  american_option_price(
-    S0 = S0-(S0*h),
-    r = rf,
-    sigma = row["IVM"],
-    tau = row["tau"],
-    K = row["Strike"],
-    steps = N,
-    opt_type = "call",
-    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
-    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
-  )
-))/(2*S0*h)
-
-#Calculate Gamma
-gamma<-(apply(calls, 1, function(row)
-  american_option_price(
-    S0 = S0+(S0*h),
-    r = rf,
-    sigma = row["IVM"],
-    tau = row["tau"],
-    K = row["Strike"],
-    steps = N,
-    opt_type = "call",
-    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
-    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
-  )
-)-(2*apply(calls, 1, function(row)
-  american_option_price(
-    S0 = S0,
-    r = rf,
-    sigma = row["IVM"],
-    tau = row["tau"],
-    K = row["Strike"],
-    steps = N,
-    opt_type = "call",
-    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
-    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
-  )
-))+apply(calls, 1, function(row)
-  american_option_price(
-    S0 = S0-(S0*h),
-    r = rf,
-    sigma = row["IVM"],
-    tau = row["tau"],
-    K = row["Strike"],
-    steps = N,
-    opt_type = "call",
-    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
-    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
-  )
-))/((S0*h)^2)
 
 #Calculate Vega
 vega<-(apply(calls, 1, function(row)
   american_option_price(
     S0 = S0,
     r = rf,
-    sigma = row["IVM"]+(row["IVM"]*h),
+    sigma = row["IVM"]+(row["IVM"]*row["h"]),
     tau = row["tau"],
     K = row["Strike"],
     steps = N,
     opt_type = "call",
+    greeks = FALSE,
     # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
     div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
   )
@@ -290,45 +247,47 @@ vega<-(apply(calls, 1, function(row)
   american_option_price(
     S0 = S0,
     r = rf,
-    sigma = row["IVM"]-(row["IVM"]*h),
+    sigma = row["IVM"]-(row["IVM"]*row["h"]),
     tau = row["tau"],
     K = row["Strike"],
     steps = N,
     opt_type = "call",
+    greeks = FALSE,
     # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
     div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
   )
-))/(2*calls$IVM*h)
+))/(2*calls$IVM*calls$h)
 
 #Calculate Rho
 rho<-(apply(calls, 1, function(row)
   american_option_price(
     S0 = S0,
-    r = rf+(rf*h),
+    r = rf+(rf*row["h"]),
     sigma = row["IVM"],
     tau = row["tau"],
     K = row["Strike"],
     steps = N,
     opt_type = "call",
+    greeks = FALSE,
     # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
     div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
   )
 )-apply(calls, 1, function(row)
   american_option_price(
     S0 = S0,
-    r = rf-(rf*h),
+    r = rf-(rf*row["h"]),
     sigma = row["IVM"],
     tau = row["tau"],
     K = row["Strike"],
     steps = N,
     opt_type = "call",
+    greeks = FALSE,
     # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
     div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
   )
-))/(2*rf*h)
+))/(2*rf*calls$h)
 
-gamma<-round(gamma,7)
-calls<-cbind(calls,delta,gamma,vega,rho)
+calls<-cbind(calls,vega,rho)
 ```
 
 ```{r}
@@ -345,6 +304,7 @@ puts$est <- apply(puts, 1, function(row)
     K = row["Strike"],
     steps = N,
     opt_type = "put",
+    greeks = FALSE,
     # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
     div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
   )
@@ -392,5 +352,53 @@ tau2<-unique(puts$tau)
 plot(tau2,MSE2, main = "MSE vs Tau(Puts)")
 ```
 
-The same trend can be seen when pricing puts, though to less of a degree as tau increases.
+The same trend can be seen when pricing puts, though to less of a degree as tau increases. This increase in error can likely be attributed to our use of constant interest rates and volatility, which are exacerbated when there is more time for the model to account for. 
+
+## Evaluating the Greeks
+
+### Delta
+```{r}
+plot(calls$Strike[1:20],calls$Delta[1:20], main = "Delta vs Strike")
+points(calls$Strike[21:40],calls$Delta[21:40])
+points(calls$Strike[41:60],calls$Delta[41:60])
+points(calls$Strike[61:80],calls$Delta[61:80])
+```
+
+Looking at the plot of delta vs strike, we can see the delta of the options for each expiration date decrease the further out of the money the option is. 
+
+### Gamma
+```{r}
+plot(calls$Strike[1:20],calls$Gamma[1:20],ylim=c(0,.04), main = "Gamma vs Strike")
+points(calls$Strike[21:40],calls$Gamma[21:40])
+points(calls$Strike[41:60],calls$Gamma[41:60])
+points(calls$Strike[61:80],calls$Gamma[61:80])
+```
+
+### Theta
+```{r}
+plot(calls$Strike[1:20],calls$Theta[1:20],ylim = c(-62,-30), main = "Theta vs Strike")
+points(calls$Strike[21:40],calls$Theta[21:40])
+points(calls$Strike[41:60],calls$Theta[41:60])
+points(calls$Strike[61:80],calls$Theta[61:80])
+```
+
+
+### Vega
+```{r}
+plot(calls$Strike[1:20],calls$vega[1:20],ylim=c(30,95), main = "Vega vs Strike")
+points(calls$Strike[21:40],calls$vega[21:40])
+points(calls$Strike[41:60],calls$vega[41:60])
+points(calls$Strike[61:80],calls$vega[61:80])
+```
+
+
+### Rho
+```{r}
+plot(calls$Strike[1:20],calls$rho[1:20],ylim=c(0,80), main = "Rho vs Strike")
+points(calls$Strike[21:40],calls$rho[21:40])
+points(calls$Strike[41:60],calls$rho[41:60])
+points(calls$Strike[61:80],calls$rho[61:80])
+```
+
+
 
