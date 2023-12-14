@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(dplyr)
 library(moments)
 library(plotly)
+library(quantmod)
 ```
 
 ```{r import_data}
@@ -211,7 +212,7 @@ $$\Gamma = \frac{\frac{f_{uu}-f_{ud}}{S_{uu}-S_{ud}}-\frac{f_{ud}-f_{dd}}{S_{ud}
 
 $$\Theta = \frac{f_{ud}-f}{2 \cdot \frac{\tau}{n}}$$
 
- We calculated vega and rho using finite difference methods. The formula for these are as follows...
+We calculated vega and rho using finite difference methods. The formula for these can be seen below. Originally we were using finite difference methods to calculate more of the Greeks, but ran into some difficulties. The first being that you encounter numerical difficulties when trying to calculate Gamma, this is due to the very small step sizes interacting with the second derivative in a way that causes inaccuracies(via the square in the denominator). It was also inconvenient to have to wait for all the Greeks to be calculated numerically when knitting our document or doing further data exploration. This is why we settled for the approximations above.
 
 $$\upsilon = \frac{A(s,\sigma +\Delta \sigma)-A(s, \sigma - \Delta \sigma)}{2 \cdot \Delta \sigma}$$
 
@@ -331,7 +332,7 @@ The same trend can be seen when pricing puts, though to less of a degree as tau 
 ## Evaluating the Greeks
 
 ### Delta
-```{r}
+```{r, echo=FALSE}
 plot(calls$Strike[1:20],calls$Delta[1:20], main = "Delta vs Strike",col = "lightblue",xlab = "Strike", ylab = "Delta")
 points(calls$Strike[21:40],calls$Delta[21:40],col = "blue")
 points(calls$Strike[41:60],calls$Delta[41:60],col = "darkblue")
@@ -341,21 +342,23 @@ legend(450, .4, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),
 )
 ```
 
-Looking at the plot of delta vs strike, we can see the delta of the options for each expiration date decrease the further out of the money the option is. 
+Looking at the plot of delta vs strike, we can see the delta of the options for each expiration date decrease the further out of the money the option is. We can also see that the closer to expiry an option is, the less sensitive it is to the underlying security.
 
 ### Gamma
-```{r}
+```{r, echo = FALSE}
 plot(calls$Strike[1:20],calls$Gamma[1:20],ylim=c(0,.04), main = "Gamma vs Strike",col = "chocolate1",xlab = "Strike", ylab = "Gamma")
 points(calls$Strike[21:40],calls$Gamma[21:40],col = "chocolate2")
 points(calls$Strike[41:60],calls$Gamma[41:60],col = "chocolate3")
 points(calls$Strike[61:80],calls$Gamma[61:80],col = "chocolate4")
-legend(450, .01, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),  
+legend(450, .011, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),  
        fill = c("chocolate1","chocolate2","chocolate3","chocolate4") 
 )
 ```
 
+Looking at Gamma, we see it's the largest around the strike, which is in line with conventional option theory. It's also apparent that the closer to expiration the option is, the more sensitive delta is to the underlying security.
+
 ### Theta
-```{r}
+```{r, echo = FALSE}
 plot(calls$Strike[1:20],calls$Theta[1:20],ylim = c(-62,-30), main = "Theta vs Strike",col = "coral1",xlab = "Strike", ylab = "Theta")
 points(calls$Strike[21:40],calls$Theta[21:40],col = "coral2")
 points(calls$Strike[41:60],calls$Theta[41:60],col = "coral3")
@@ -365,9 +368,10 @@ legend(465, -50, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),
 )
 ```
 
+Theta maintains this trend, with options close to expiration being significantly more sensitive to time decay, nearly double that of its further-dated counterparts.
 
 ### Vega
-```{r}
+```{r, echo = FALSE}
 plot(calls$Strike[1:20],calls$vega[1:20],ylim=c(30,95), main = "Vega vs Strike",col = "burlywood",xlab = "Strike", ylab = "Vega")
 points(calls$Strike[21:40],calls$vega[21:40],col = "burlywood2")
 points(calls$Strike[41:60],calls$vega[41:60],col = "burlywood3")
@@ -377,8 +381,10 @@ legend(449, 99, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),
 )
 ```
 
+Vega is where we see this trend begin to change, as options closer to expiry a significantly less affected by changes in implied volatility. Longer dated options however are impacted by these changes, this is because future volatility becomes more and more uncertain the farther in time you go.
+
 ### IVM
-```{r}
+```{r, echo = FALSE}
 plot(calls$Strike[1:20],calls$IVM[1:20],ylim=c(.1,.14), main = "IV vs Strike",col = "aquamarine1",xlab = "Strike", ylab = "IV")
 points(calls$Strike[21:40],calls$IVM[21:40],col = "aquamarine2")
 points(calls$Strike[41:60],calls$IVM[41:60],col = "aquamarine3")
@@ -387,6 +393,8 @@ legend(465, .14, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),
        fill = c("aquamarine1","aquamarine2","aquamarine3","aquamarine4") 
 )
 ```
+
+The plot of the volatility smile gives us good insight on why our model may overprice calls more than puts. Looking at the graph we can see it forms more of a volatility "smirk" rather than a "smile". The higher implied volatility for the options with the lower strike, imply that the market is pricing in a downwards move in the future. This makes sense as to why our puts would be more inline with market values as opposed to our calls.
 
 ```{r, eval=FALSE}
 Moneyness <- unique((S0-calls$Strike)/S0)
@@ -407,7 +415,7 @@ plot_ly(x=~Moneyness, y=~Maturity, z=~IV) %>%
 ```
 
 ### Rho
-```{r}
+```{r, echo = FALSE}
 plot(calls$Strike[1:20],calls$rho[1:20],ylim=c(0,80), main = "Rho vs Strike",col = "cyan1",xlab = "Strike", ylab = "Rho")
 points(calls$Strike[21:40],calls$rho[21:40],col = "cyan2")
 points(calls$Strike[41:60],calls$rho[41:60],col = "cyan3")
@@ -416,6 +424,8 @@ legend(465, 80, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),
        fill = c("cyan1","cyan2","cyan3","cyan4") 
 )
 ```
+
+Finally, Rho exhibits a similar trend as vega, with further dated options being a lot more susceptible to changes in interest rates. This is fore the same reason, that the further aheaed you go in time, the more uncertain future rates become.
 
 ## Delta Hedging
 
@@ -429,28 +439,28 @@ tau1_K458_puts<-c(puts[9,c(1:4)])
 delta_hedge<-american_option_price(
     S0 = S$SPY.Adjusted[1],
     r = rf,
-    sigma = tau1_K458_calls$IVM,
-    tau = tau1_K458_calls$tau-(1/252),
-    K = tau1_K458_calls$Strike,
+    sigma = tau1_K458_puts$IVM,
+    tau = tau1_K458_puts$tau-(1/252),
+    K = tau1_K458_puts$Strike,
     steps = N,
     opt_type = "put",
     greeks = TRUE,
     # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
-    div_sched = div_sched_calc(tau1_K458_calls$tau, div_freq, div_amt, 11/252)
+    div_sched = div_sched_calc(tau1_K458_puts$tau, div_freq, div_amt, 11/252)
   )
 
 for(i in c(2:length(S$SPY.Adjusted))){
   delta_hedge<-rbind(delta_hedge,american_option_price(
     S0 = S$SPY.Adjusted[i],
     r = rf,
-    sigma = tau1_K458_calls$IVM,
-    tau = tau1_K458_calls$tau-(i/252),
-    K = tau1_K458_calls$Strike,
+    sigma = tau1_K458_puts$IVM,
+    tau = tau1_K458_puts$tau-(i/252),
+    K = tau1_K458_puts$Strike,
     steps = N,
     opt_type = "put",
     greeks = TRUE,
     # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
-    div_sched = div_sched_calc(tau1_K458_calls$tau-(i/252), div_freq, div_amt, 11/252)
+    div_sched = div_sched_calc(tau1_K458_puts$tau-(i/252), div_freq, div_amt, 11/252)
   ))
   
 }
@@ -462,5 +472,6 @@ price_diff<-data.frame(c(0,as.vector(S[-1])-as.vector(S[-9])))
 delta_hedge<-cbind(data.frame(S),delta_hedge[,c(1,2)],Put_diff,delta_1*price_diff)
 
 colnames(delta_hedge)<-c("S", "Est", "Delta", "P(t) - P(t-1)", "Pi(t) - Pi(t-1)")
-                                                               
+  
+delta_hedge                                                            
 ```
