@@ -12,6 +12,7 @@ urlcolor: blue
 knitr::opts_chunk$set(echo = TRUE)
 library(dplyr)
 library(moments)
+library(plotly)
 ```
 
 ```{r import_data}
@@ -33,29 +34,29 @@ df = df %>% subset(Strike != "ERROR(6)")
 ```{r split}
 # Split dataset into calls and puts
 calls = df %>%
-  select(1:(ncol(df) %/% 2))
+  dplyr::select(1:(ncol(df) %/% 2))
 
 puts = df %>%
-  select((1 + ncol(df) %/% 2):ncol(df))
+  dplyr::select((1 + ncol(df) %/% 2):ncol(df))
 ```
 
 ```{r mid_price}
 # Option price as mid price
 calls = calls %>%
-  mutate(Price = (calls$Bid + calls$Ask) / 2, IVM = IVM / 100) %>%
-  select(-Bid, -Ask, -Last, -Volm)
+  dplyr::mutate(Price = (calls$Bid + calls$Ask) / 2, IVM = IVM / 100) %>%
+  dplyr::select(-Bid, -Ask, -Last, -Volm)
 puts = puts %>%
-  mutate(Price = (puts$Bid + puts$Ask) / 2, IVM = IVM / 100) %>%
-  select(-Bid, -Ask, -Last, -Volm)
+  dplyr::mutate(Price = (puts$Bid + puts$Ask) / 2, IVM = IVM / 100) %>%
+  dplyr::select(-Bid, -Ask, -Last, -Volm)
 ```
 
 ```{r calc_tau}
 # Tau in annual units from contract expiration
 data_date = as.Date("12/01/23", "%m/%d/%y")
 calls = calls %>%
-  mutate(tau = as.numeric(as.Date(sub(".*?(\\d{1,2}/\\d{1,2}/\\d{2,4}).*", "\\1", Ticker), "%m/%d/%y") - data_date) / 252) %>% select(-Ticker) %>% mutate_all(as.numeric)
+  dplyr::mutate(tau = as.numeric(as.Date(sub(".*?(\\d{1,2}/\\d{1,2}/\\d{2,4}).*", "\\1", Ticker), "%m/%d/%y") - data_date) / 252) %>% dplyr::select(-Ticker) %>% dplyr::mutate_all(as.numeric)
 puts = puts %>%
-  mutate(tau = as.numeric(as.Date(sub(".*?(\\d{1,2}/\\d{1,2}/\\d{2,4}).*", "\\1", Ticker), "%m/%d/%y") - data_date) / 252) %>% select(-Ticker) %>% mutate_all(as.numeric)
+  dplyr::mutate(tau = as.numeric(as.Date(sub(".*?(\\d{1,2}/\\d{1,2}/\\d{2,4}).*", "\\1", Ticker), "%m/%d/%y") - data_date) / 252) %>% dplyr::select(-Ticker) %>% dplyr::mutate_all(as.numeric)
 ```
 
 ```{r}
@@ -164,7 +165,7 @@ div_sched_calc = function(tau, freq, amt, time_till_next_exdiv=freq) {
 ```
 
 ```{r apply_call_pricing}
-output<-bind_rows(apply(calls, 1, function(row)
+output<-dplyr::bind_rows(apply(calls, 1, function(row)
   american_option_price(
     S0 = S0,
     r = rf,
@@ -182,6 +183,24 @@ output<-bind_rows(apply(calls, 1, function(row)
 calls<-cbind(calls,output)
 ```
 
+```{r apply_put_pricing}
+puts$est <- apply(puts, 1, function(row)
+  american_option_price(
+    S0 = S0,
+    r = rf,
+    sigma = row["IVM"],
+    tau = row["tau"],
+    K = row["Strike"],
+    steps = N,
+    opt_type = "put",
+    greeks = FALSE,
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
+  )
+)
+
+```
+
 ## Calculating the Greeks
 
 We calculated delta, gamma, and theta using analytical approximations which can be seen below. This was chosen in order to save on computation time, as to numerically compute each greek takes roughly double the time of computing the price of the option itself, and these formulas give good approximations.
@@ -196,7 +215,7 @@ $$\Theta = \frac{f_{ud}-f}{2 \cdot \frac{\tau}{n}}$$
 
 $$\upsilon = \frac{A(s,\sigma +\Delta \sigma)-A(s, \sigma - \Delta \sigma)}{2 \cdot \Delta \sigma}$$
 
-$$\rho = \frac{A(s,r +\delta r)-A(s, r - \delta r)}{2 \cdot \delta r}$$
+$$\rho = \frac{A(s,r +\Delta r)-A(s, r - \Delta r)}{2 \cdot \Delta r}$$
 
 ```{r greeks, echo=FALSE}
 
@@ -265,30 +284,14 @@ calls<-cbind(calls,vega,rho)
 head(calls)
 ```
 
-```{r apply_put_pricing}
-puts$est <- apply(puts, 1, function(row)
-  american_option_price(
-    S0 = S0,
-    r = rf,
-    sigma = row["IVM"],
-    tau = row["tau"],
-    K = row["Strike"],
-    steps = N,
-    opt_type = "put",
-    greeks = FALSE,
-    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
-    div_sched = div_sched_calc(row["tau"], div_freq, div_amt, 11/252)
-  )
-)
-
-```
-
 ## Evaluating Model Output
+
+### Market vs Model
 
 Looking at the below plot of our model prices vs observed market prices, we see that out model provides a good estimation, but this estimation begins to vary as tau increases. 
 
 ```{r}
-plot(calls$Price, col="blue",ylim = c(0,20),main = "Market vs Estimation(Calls)")
+plot(calls$Price, col="blue",ylim = c(0,20),main = "Market vs Estimation(Calls)",xlab = "Tau", ylab = "Price in $")
 points(calls$est, col="red")
 legend(0, 20, legend=c("Market Price", "Estimation"),  
        fill = c("blue","red") 
@@ -296,7 +299,7 @@ legend(0, 20, legend=c("Market Price", "Estimation"),
 ```
 
 ```{r}
-plot(puts$Price, col="blue",ylim = c(0,20),main = "Market vs Estimation(Puts)")
+plot(puts$Price, col="blue",ylim = c(0,20),main = "Market vs Estimation(Puts)",xlab = "Tau", ylab = "Price in $")
 points(puts$est, col="red")
 legend(0, 20, legend=c("Market Price", "Estimation"),  
        fill = c("blue","red") 
@@ -329,47 +332,89 @@ The same trend can be seen when pricing puts, though to less of a degree as tau 
 
 ### Delta
 ```{r}
-plot(calls$Strike[1:20],calls$Delta[1:20], main = "Delta vs Strike")
-points(calls$Strike[21:40],calls$Delta[21:40])
-points(calls$Strike[41:60],calls$Delta[41:60])
-points(calls$Strike[61:80],calls$Delta[61:80])
+plot(calls$Strike[1:20],calls$Delta[1:20], main = "Delta vs Strike",col = "lightblue",xlab = "Strike", ylab = "Delta")
+points(calls$Strike[21:40],calls$Delta[21:40],col = "blue")
+points(calls$Strike[41:60],calls$Delta[41:60],col = "darkblue")
+points(calls$Strike[61:80],calls$Delta[61:80],col = "black")
+legend(450, .4, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),  
+       fill = c("lightblue","blue","darkblue","black") 
+)
 ```
 
 Looking at the plot of delta vs strike, we can see the delta of the options for each expiration date decrease the further out of the money the option is. 
 
 ### Gamma
 ```{r}
-plot(calls$Strike[1:20],calls$Gamma[1:20],ylim=c(0,.04), main = "Gamma vs Strike")
-points(calls$Strike[21:40],calls$Gamma[21:40])
-points(calls$Strike[41:60],calls$Gamma[41:60])
-points(calls$Strike[61:80],calls$Gamma[61:80])
+plot(calls$Strike[1:20],calls$Gamma[1:20],ylim=c(0,.04), main = "Gamma vs Strike",col = "chocolate1",xlab = "Strike", ylab = "Gamma")
+points(calls$Strike[21:40],calls$Gamma[21:40],col = "chocolate2")
+points(calls$Strike[41:60],calls$Gamma[41:60],col = "chocolate3")
+points(calls$Strike[61:80],calls$Gamma[61:80],col = "chocolate4")
+legend(450, .01, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),  
+       fill = c("chocolate1","chocolate2","chocolate3","chocolate4") 
+)
 ```
 
 ### Theta
 ```{r}
-plot(calls$Strike[1:20],calls$Theta[1:20],ylim = c(-62,-30), main = "Theta vs Strike")
-points(calls$Strike[21:40],calls$Theta[21:40])
-points(calls$Strike[41:60],calls$Theta[41:60])
-points(calls$Strike[61:80],calls$Theta[61:80])
+plot(calls$Strike[1:20],calls$Theta[1:20],ylim = c(-62,-30), main = "Theta vs Strike",col = "coral1",xlab = "Strike", ylab = "Theta")
+points(calls$Strike[21:40],calls$Theta[21:40],col = "coral2")
+points(calls$Strike[41:60],calls$Theta[41:60],col = "coral3")
+points(calls$Strike[61:80],calls$Theta[61:80],col = "coral4")
+legend(465, -50, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),  
+       fill = c("coral1","coral2","coral3","coral4") 
+)
 ```
 
 
 ### Vega
 ```{r}
-plot(calls$Strike[1:20],calls$vega[1:20],ylim=c(30,95), main = "Vega vs Strike")
-points(calls$Strike[21:40],calls$vega[21:40])
-points(calls$Strike[41:60],calls$vega[41:60])
-points(calls$Strike[61:80],calls$vega[61:80])
+plot(calls$Strike[1:20],calls$vega[1:20],ylim=c(30,95), main = "Vega vs Strike",col = "burlywood",xlab = "Strike", ylab = "Vega")
+points(calls$Strike[21:40],calls$vega[21:40],col = "burlywood2")
+points(calls$Strike[41:60],calls$vega[41:60],col = "burlywood3")
+points(calls$Strike[61:80],calls$vega[61:80],col = "burlywood4")
+legend(449, 99, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),  
+       fill = c("burlywood","burlywood2","burlywood3","burlywood4") 
+)
 ```
 
+### IVM
+```{r}
+plot(calls$Strike[1:20],calls$IVM[1:20],ylim=c(.1,.14), main = "IV vs Strike",col = "aquamarine1",xlab = "Strike", ylab = "IV")
+points(calls$Strike[21:40],calls$IVM[21:40],col = "aquamarine2")
+points(calls$Strike[41:60],calls$IVM[41:60],col = "aquamarine3")
+points(calls$Strike[61:80],calls$IVM[61:80],col = "aquamarine4")
+legend(465, .14, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),  
+       fill = c("aquamarine1","aquamarine2","aquamarine3","aquamarine4") 
+)
+```
+
+```{r, eval=FALSE}
+Moneyness <- unique((S0-calls$Strike)/S0)
+Maturity <- unique(calls$tau*252)
+IV <- as.matrix(data.frame(calls$IVM[1:20],calls$IVM[21:40],calls$IVM[41:60],calls$IVM[61:80]))
+
+
+
+axx = list(title = "x: Moneyness (in %, Neg. values are OTM call)")
+axy = list(title = "y: Time to Maturity (in days)")
+axz = list(title = "z: Implied Volatility")
+
+plot_ly(x=~Moneyness, y=~Maturity, z=~IV) %>% 
+    add_surface() %>%
+    layout(title = "December 1st, 2023 SPY Option Vol Surface",
+           scene = list(xaxis=axx,yaxis=axy,zaxis=axz))
+
+```
 
 ### Rho
 ```{r}
-plot(calls$Strike[1:20],calls$rho[1:20],ylim=c(0,80), main = "Rho vs Strike")
-points(calls$Strike[21:40],calls$rho[21:40])
-points(calls$Strike[41:60],calls$rho[41:60])
-points(calls$Strike[61:80],calls$rho[61:80])
+plot(calls$Strike[1:20],calls$rho[1:20],ylim=c(0,80), main = "Rho vs Strike",col = "cyan1",xlab = "Strike", ylab = "Rho")
+points(calls$Strike[21:40],calls$rho[21:40],col = "cyan2")
+points(calls$Strike[41:60],calls$rho[41:60],col = "cyan3")
+points(calls$Strike[61:80],calls$rho[61:80],col = "cyan4")
+legend(465, 80, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),  
+       fill = c("cyan1","cyan2","cyan3","cyan4") 
+)
 ```
 
-
-
+## Delta Hedging
