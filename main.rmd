@@ -396,7 +396,7 @@ legend(465, .14, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),
 
 The plot of the volatility smile gives us good insight on why our model may overprice calls more than puts. Looking at the graph we can see it forms more of a volatility "smirk" rather than a "smile". The higher implied volatility for the options with the lower strike, imply that the market is pricing in a downwards move in the future. This makes sense as to why our puts would be more inline with market values as opposed to our calls.
 
-```{r, eval=FALSE}
+```{r, eval=FALSE, include=FALSE}
 Moneyness <- unique((S0-calls$Strike)/S0)
 Maturity <- unique(calls$tau*252)
 IV <- as.matrix(data.frame(calls$IVM[1:20],calls$IVM[21:40],calls$IVM[41:60],calls$IVM[61:80]))
