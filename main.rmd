@@ -418,3 +418,49 @@ legend(465, 80, legend=c("Tau 1", "Tau 2", "Tau 3", "Tau 4"),
 ```
 
 ## Delta Hedging
+
+```{r, echo = FALSE}
+getSymbols("SPY", from = "2023-12-01")
+S<-SPY$SPY.Adjusted
+
+#Choose K = 458 for this exercise
+tau1_K458_puts<-c(puts[9,c(1:4)])
+
+delta_hedge<-american_option_price(
+    S0 = S$SPY.Adjusted[1],
+    r = rf,
+    sigma = tau1_K458_calls$IVM,
+    tau = tau1_K458_calls$tau-(1/252),
+    K = tau1_K458_calls$Strike,
+    steps = N,
+    opt_type = "put",
+    greeks = TRUE,
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(tau1_K458_calls$tau, div_freq, div_amt, 11/252)
+  )
+
+for(i in c(2:length(S$SPY.Adjusted))){
+  delta_hedge<-rbind(delta_hedge,american_option_price(
+    S0 = S$SPY.Adjusted[i],
+    r = rf,
+    sigma = tau1_K458_calls$IVM,
+    tau = tau1_K458_calls$tau-(i/252),
+    K = tau1_K458_calls$Strike,
+    steps = N,
+    opt_type = "put",
+    greeks = TRUE,
+    # data was from 12/01/23, next ex_div data is 12/16/23 -> 16-1=15 days
+    div_sched = div_sched_calc(tau1_K458_calls$tau-(i/252), div_freq, div_amt, 11/252)
+  ))
+  
+}
+
+Put_diff<-data.frame(c(0,delta_hedge[-1,1]-delta_hedge[-9,1]))
+delta_1<-data.frame(c(0,delta_hedge[-9,2]))
+price_diff<-data.frame(c(0,as.vector(S[-1])-as.vector(S[-9])))
+
+delta_hedge<-cbind(data.frame(S),delta_hedge[,c(1,2)],Put_diff,delta_1*price_diff)
+
+colnames(delta_hedge)<-c("S", "Est", "Delta", "P(t) - P(t-1)", "Pi(t) - Pi(t-1)")
+                                                               
+```
