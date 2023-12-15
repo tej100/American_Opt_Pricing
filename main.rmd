@@ -11,14 +11,22 @@ subtitle: |
   |
 author:
  - Tejas Appana
- - Andrew Finn
  - Jacob Bussel
+ - Andrew Finn
  - Amin Labadi
 date: "Last compiled on `r format(Sys.time(), '%B %d, %Y')`"
 output: html_document
 runtime: shiny
 urlcolor: blue
 ---
+
+## Abstract
+
+## Introduction
+
+## Setup
+
+The following R libraries were utilized throughout our analysis.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -29,11 +37,20 @@ library(plotly)
 library(quantmod)
 ```
 
-```{r import_data}
+## Data
+
+On December 1st, 2023, the SPDR S&P 500 ETF (SPY) American options chain data was retrieved from the Bloomberg Terminal as an Excel file. The dataset included a total of 160 instances, evenly split between 80 calls and 80 puts. This information encompassed options with 20 different strikes, ranging from \$450 to \$469, with intervals of $1. The options had four distinct expiration dates, corresponding to 2-week, 4-week, 6-week, and 8-week time-to-maturities. The factors available in the dataset were strike price, ticker (which included the contract's expiration date), National Best Bid Offer (NBBO), last price, Bloomberg's market implied volatility, and trade volume.
+
+```{r import_data, echo=FALSE}
 df = read_xlsx("grid1_lmr4qsjv.xlsx", skip = 1, col_names = T)
 ```
 
 ## Data Cleaning
+
+To ensure data integrity, a comprehensive data cleaning process was conducted, systematically removing any non-numeric or missing values. This meticulous approach aimed to create a dataset devoid of common data input errors and omissions, establishing a solid foundation for further analysis and interpretation. The following bullets some of the preprocessing techniques we implemented.
+
+- **Reformatted** corrupt **column headers** for convenient data frame access.
+- **Removed null rows** in the data set as a result of unnecessary sub headers within the data.
 
 ```{r parse}
 # Parse column names
@@ -42,41 +59,58 @@ colnames(df) = sapply(strsplit(colnames(df), "\\.{3}"), function(x) x[1])
 df = df %>% subset(Strike != "ERROR(6)")
 ```
 
+- **Filtered** the imported options data by **calls and puts**. This led to the rest of our cleaning to be implemented on each of our call and put dataframes.
+
 ```{r split}
 # Split dataset into calls and puts
 calls = df %>%
-  dplyr::select(1:(ncol(df) %/% 2))
+  select(1:(ncol(df) %/% 2))
 
 puts = df %>%
-  dplyr::select((1 + ncol(df) %/% 2):ncol(df))
+  select((1 + ncol(df) %/% 2):ncol(df))
 ```
+
+- Computed the **mid-price**, which is the midpoint between the best bid and best ask, used as the most common reference for the fair market price.
+- **Standardized the units** of all input variables for modeling purposes
+- Removed excess columns not needed for pricing
 
 ```{r mid_price}
 # Option price as mid price
 calls = calls %>%
-  dplyr::mutate(Price = (calls$Bid + calls$Ask) / 2, IVM = IVM / 100) %>%
-  dplyr::select(-Bid, -Ask, -Last, -Volm)
+  mutate(Price = (calls$Bid + calls$Ask) / 2, IVM = IVM / 100) %>%
+  select(-Bid, -Ask, -Last, -Volm)
 puts = puts %>%
-  dplyr::mutate(Price = (puts$Bid + puts$Ask) / 2, IVM = IVM / 100) %>%
-  dplyr::select(-Bid, -Ask, -Last, -Volm)
+  mutate(Price = (puts$Bid + puts$Ask) / 2, IVM = IVM / 100) %>%
+  select(-Bid, -Ask, -Last, -Volm)
 ```
+
+- Stripped the option expiration date from the contract ticker and performed datetime operations to calculate our time-to-maturity, $\tau$.
 
 ```{r calc_tau}
 # Tau in annual units from contract expiration
 data_date = as.Date("12/01/23", "%m/%d/%y")
 calls = calls %>%
-  dplyr::mutate(tau = as.numeric(as.Date(sub(".*?(\\d{1,2}/\\d{1,2}/\\d{2,4}).*", "\\1", Ticker), "%m/%d/%y") - data_date) / 252) %>% dplyr::select(-Ticker) %>% dplyr::mutate_all(as.numeric)
+  mutate(tau = as.numeric(as.Date(sub(".*?(\\d{1,2}/\\d{1,2}/\\d{2,4}).*", "\\1", Ticker), "%m/%d/%y") - data_date) / 252) %>% select(-Ticker) %>% mutate_all(as.numeric)
 puts = puts %>%
-  dplyr::mutate(tau = as.numeric(as.Date(sub(".*?(\\d{1,2}/\\d{1,2}/\\d{2,4}).*", "\\1", Ticker), "%m/%d/%y") - data_date) / 252) %>% dplyr::select(-Ticker) %>% dplyr::mutate_all(as.numeric)
+  mutate(tau = as.numeric(as.Date(sub(".*?(\\d{1,2}/\\d{1,2}/\\d{2,4}).*", "\\1", Ticker), "%m/%d/%y") - data_date) / 252) %>% select(-Ticker) %>% mutate_all(as.numeric)
 ```
+
+- Adding a column to keep track of $dt$ for hedging purposes (only demonstrated on call options).
+
+```{r}
+h<-calls$tau/N
+calls<-cbind(calls,h)
+```
+
+- Checking the maximum time-to-maturity in our data set.
 
 ```{r}
 max(calls$tau) * 12
 ```
 
-## Pricing Model
+Since the data we're working with does not have options of a time-to-maturity greater than 3 months, and all our data is from the option chain of one day, we can use a constant risk-free rate rather than a stochastic rate. As of December 01, 2023 (the day the data was pulled), the 1-month and 3-month SOFR and treasury yields are $\sim 5.4%$, which is what we will use as our proxy for the risk-free rate in our models. The spot price was also \$458.65 at the time the data was pulled (1:30 PM EST). Additionally, SPY pays dividends quarterly and proportional to the dividends paid by the companies in the index. For simplicity, I've set the dividend amount to the average historical amount over the past 4 quarters, multiplied in with the growth factor. Our step-size is arbitrarily set to 200 for accurate yet timely computations.
 
-Since the data we're working with does not have options of a time-to-maturity greater than 3 months, and all our data is from the option chain of one day, we can use a constant risk-free rate rather than a stochastic rate. As of December 01, 2023 (the day the data was pulled), the 1-month, 2-month, 3-month and 4-month treasury yields are $\sim 5.4%$, which is what we will use as our proxy for the risk-free rate in our models. The spot price was also \$458.65 at the time the data was pulled. Additionally, SPY pays dividends quarterly and proportional to the dividends paid by the companies in the index. For simplicity, I've set the dividend amount to the average historical amount over the past 4 quarters, multiplied in with the growth factor.
+- Initializing parameters.
 
 ```{r init_params}
 rf = 0.054
@@ -86,11 +120,9 @@ div_amt = 1.61
 N = 200
 ```
 
-```{r}
-h<-calls$tau/N
-calls<-cbind(calls,h)
-head(calls)
-```
+## Methodology (Pricing Model)
+
+Below, we've illustrated our binomial asset pricing model.
 
 ```{r option_pricing}
 american_option_price = function(S0, r, sigma, tau, K, steps, opt_type, greeks = TRUE,div_sched = NULL) {
