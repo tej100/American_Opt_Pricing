@@ -1,7 +1,19 @@
 ---
-title: "FE 620 Final Project"
-subtitle: "I pledge my honor that I have abided by the Stevens Honor System"
-author: "Author: "
+title: "SPY American Option Pricing Model"
+header-includes:
+  - \usepackage{setspace}\doublespacing
+subtitle: |
+  | FE 620 Final Project
+  |
+  | https://github.com/tej100/American_Opt_Pricing
+  |
+  | I pledge my honor that I have abided by the Stevens Honor System
+  |
+author:
+ - Tejas Appana
+ - Andrew Finn
+ - Jacob Bussel
+ - Amin Labadi
 date: "Last compiled on `r format(Sys.time(), '%B %d, %Y')`"
 output: html_document
 runtime: shiny
@@ -10,6 +22,7 @@ urlcolor: blue
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
 library(dplyr)
 library(moments)
 library(plotly)
@@ -17,12 +30,9 @@ library(quantmod)
 ```
 
 ```{r import_data}
-df = readxl::read_xlsx("/Users/andrew/Documents/SCHOOL/2023/Fall 2023/FE620/Final Project/grid1_lmr4qsjv.xlsx", skip = 1, col_names = T)
+df = read_xlsx("grid1_lmr4qsjv.xlsx", skip = 1, col_names = T)
 ```
 
-```{r}
-head(df)
-```
 ## Data Cleaning
 
 ```{r parse}
@@ -166,7 +176,7 @@ div_sched_calc = function(tau, freq, amt, time_till_next_exdiv=freq) {
 ```
 
 ```{r apply_call_pricing}
-output<-dplyr::bind_rows(apply(calls, 1, function(row)
+output<-bind_rows(apply(calls, 1, function(row)
   american_option_price(
     S0 = S0,
     r = rf,
